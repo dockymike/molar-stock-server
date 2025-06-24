@@ -24,7 +24,7 @@ router.post(
       return res.status(400).send(`Webhook Error: ${err.message}`)
     }
 
-    // ✅ Handle completed checkout session
+    // ✅ Handle successful payment
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object
       const customerId = session.customer
@@ -41,7 +41,28 @@ router.post(
           console.log(`✅ User with customer ${customerId} marked as paid`)
         }
       } catch (err) {
-        console.error('❌ DB update failed for webhook:', err)
+        console.error('❌ DB update failed for checkout session:', err)
+      }
+    }
+
+    // ✅ Handle subscription cancellation
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object
+      const customerId = subscription.customer
+
+      try {
+        const result = await pool.query(
+          'UPDATE users SET is_paid = false WHERE stripe_customer_id = $1',
+          [customerId]
+        )
+
+        if (result.rowCount === 0) {
+          console.warn(`⚠️ No user found for canceled customer ID ${customerId}`)
+        } else {
+          console.log(`✅ Subscription canceled — User ${customerId} downgraded to free`)
+        }
+      } catch (err) {
+        console.error('❌ DB update failed for subscription cancellation:', err)
       }
     }
 
