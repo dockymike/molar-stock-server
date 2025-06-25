@@ -6,9 +6,9 @@ dotenv.config()
 const { Pool } = pg
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL_POOLED,
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 1, // ✅ PgBouncer handles pooling now
+  max: 5, // go back to 5 for default behavior
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 2000,
 })
