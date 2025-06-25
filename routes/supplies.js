@@ -90,8 +90,11 @@ router.put('/:id', async (req, res) => {
     quantity,
     cost_per_unit,
     unit,
-    low_stock_threshold, // ✅ added
+    low_stock_threshold,
+    barcode,
   } = req.body
+
+  const cleanedBarcode = barcode?.trim() === '' ? null : barcode
 
   try {
     const result = await pool.query(
@@ -102,10 +105,11 @@ router.put('/:id', async (req, res) => {
            quantity = $4,
            cost_per_unit = $5,
            unit = $6,
-           low_stock_threshold = $7
-       WHERE id = $8
+           low_stock_threshold = $7,
+           barcode = $8
+       WHERE id = $9
        RETURNING *`,
-      [name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, id]
+      [name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, cleanedBarcode, id]
     )
 
     if (result.rows.length === 0) {
@@ -118,6 +122,7 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ error: 'Could not update supply' })
   }
 })
+
 
 // ✅ Delete a supply
 router.delete('/:id', async (req, res) => {

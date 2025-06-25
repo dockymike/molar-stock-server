@@ -20,6 +20,9 @@ import passwordRoutes from './routes/passwordReset.js'
 import stripeRoutes from './routes/stripe.js'
 import stripeWebhookRouter from './routes/stripeWebhook.js' // ✅ NEW
 
+import barcodeRoutes from './scanning/routes/barcode.js'
+
+
 const app = express()
 const port = process.env.PORT || 3001
 
@@ -75,6 +78,9 @@ console.log('✅ /api/password mounted')
 
 app.use('/api/stripe', stripeRoutes)
 console.log('✅ /api/stripe mounted')
+
+app.use('/api/barcode', barcodeRoutes)
+console.log('✅ /api/barcode mounted')
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`)

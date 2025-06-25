@@ -9,7 +9,7 @@ router.use(verifyToken)
 
 /**
  * POST /api/op-supplies
- * Assign a supply to an operatory. Adds to existing if already assigned.
+ * Assign a supply to an operatory. Deducts from unassigned `supplies.quantity`.
  */
 router.post('/', async (req, res) => {
   const { op_id, supply_id, quantity } = req.body
@@ -23,27 +23,29 @@ router.post('/', async (req, res) => {
 
     await client.query('BEGIN')
 
-    const globalRes = await client.query(
-      'SELECT quantity FROM supplies WHERE id = $1',
+    // ✅ Get unassigned quantity from supplies
+    const supplyRes = await client.query(
+      'SELECT quantity FROM supplies WHERE id = $1 FOR UPDATE',
       [supply_id]
     )
-    if (globalRes.rows.length === 0) {
-      throw new Error('Supply not found in global stock')
-    }
-    const globalQty = parseInt(globalRes.rows[0].quantity, 10)
-
-    const assignedRes = await client.query(
-      'SELECT SUM(quantity) AS total FROM op_supplies WHERE supply_id = $1',
-      [supply_id]
-    )
-    const totalAssigned = parseInt(assignedRes.rows[0].total || 0, 10)
-    const available = globalQty - totalAssigned
-
-    if (qty > available) {
+    if (supplyRes.rows.length === 0) {
       await client.query('ROLLBACK')
-      return res.status(400).json({ error: `Not enough global stock. Only ${available} unassigned.` })
+      return res.status(404).json({ error: 'Supply not found' })
     }
 
+    const unassigned = parseInt(supplyRes.rows[0].quantity, 10)
+    if (qty > unassigned) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: `Not enough unassigned inventory. Only ${unassigned} available.` })
+    }
+
+    // ✅ Deduct from global unassigned
+    await client.query(
+      'UPDATE supplies SET quantity = quantity - $1 WHERE id = $2',
+      [qty, supply_id]
+    )
+
+    // ✅ Insert or update op_supplies
     const existing = await client.query(
       'SELECT * FROM op_supplies WHERE op_id = $1 AND supply_id = $2',
       [op_id, supply_id]
@@ -74,6 +76,7 @@ router.post('/', async (req, res) => {
     client.release()
   }
 })
+
 
 // ✅ GET /api/op-supplies/assigned/:supply_id?total=true
 router.get('/assigned/:supply_id', async (req, res) => {
@@ -187,3 +190,58 @@ router.get('/:op_id', async (req, res) => {
 })
 
 export default router
+
+/**
+ * POST /api/op-supplies/check-in
+ * Adds supply to global inventory or operatory inventory.
+ * If op_id is null → adds to supplies table (unassigned).
+ * If op_id is provided → adds to op_supplies (insert or update).
+ */
+router.post('/check-in', async (req, res) => {
+  const { supply_id, quantity, op_id } = req.body
+  const client = await pool.connect()
+
+  try {
+    const qty = parseInt(quantity, 10)
+    if (isNaN(qty)) {
+      return res.status(400).json({ error: 'Invalid quantity' })
+    }
+
+    await client.query('BEGIN')
+
+    if (!op_id) {
+      // Global inventory (unassigned)
+      await client.query(
+        'UPDATE supplies SET quantity = quantity + $1 WHERE id = $2',
+        [qty, supply_id]
+      )
+    } else {
+      // Operatory inventory
+      const existing = await client.query(
+        'SELECT * FROM op_supplies WHERE op_id = $1 AND supply_id = $2 FOR UPDATE',
+        [op_id, supply_id]
+      )
+
+      if (existing.rows.length > 0) {
+        await client.query(
+          'UPDATE op_supplies SET quantity = quantity + $1 WHERE op_id = $2 AND supply_id = $3',
+          [qty, op_id, supply_id]
+        )
+      } else {
+        await client.query(
+          'INSERT INTO op_supplies (op_id, supply_id, quantity) VALUES ($1, $2, $3)',
+          [op_id, supply_id, qty]
+        )
+      }
+    }
+
+    await client.query('COMMIT')
+    res.json({ success: true })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    console.error('❌ Error in check-in route:', err)
+    res.status(500).json({ error: 'Check-in failed' })
+  } finally {
+    client.release()
+  }
+})
