@@ -124,16 +124,38 @@ router.put('/:id', async (req, res) => {
 })
 
 
-// ✅ Delete a supply
+// ✅ Delete a supply (only if not assigned to any operatory)
 router.delete('/:id', async (req, res) => {
   const { id } = req.params
+  const client = await pool.connect()
 
   try {
-    await pool.query('DELETE FROM supplies WHERE id = $1', [id])
+    await client.query('BEGIN')
+
+    // 🔍 Check if supply is still assigned to any operatories
+    const result = await client.query(
+      'SELECT COUNT(*) FROM op_supplies WHERE supply_id = $1',
+      [id]
+    )
+
+    const count = parseInt(result.rows[0].count, 10)
+
+    if (count > 0) {
+      await client.query('ROLLBACK')
+      return res
+        .status(400)
+        .json({ error: 'This supply is still assigned to one or more operatories. Remove the supply from all operatories first.' })
+    }
+
+    await client.query('DELETE FROM supplies WHERE id = $1', [id])
+    await client.query('COMMIT')
     res.json({ success: true })
   } catch (err) {
+    await client.query('ROLLBACK')
     console.error('Error deleting supply:', err)
     res.status(500).json({ error: 'Could not delete supply' })
+  } finally {
+    client.release()
   }
 })
 

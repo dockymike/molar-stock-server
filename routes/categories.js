@@ -52,16 +52,37 @@ router.put('/:id', async (req, res) => {
   }
 })
 
-// ✅ Delete category
+// ✅ Delete category with error if in use
 router.delete('/:id', async (req, res) => {
   const { id } = req.params
+  const client = await pool.connect()
+
   try {
-    await pool.query('DELETE FROM inventory_categories WHERE id = $1', [id])
+    await client.query('BEGIN')
+
+    // Check if any supplies use this category
+    const inUse = await client.query(
+      'SELECT 1 FROM supplies WHERE category_id = $1 LIMIT 1',
+      [id]
+    )
+
+    if (inUse.rows.length > 0) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'This category is still assigned to one or more supplies. Remove those assignments first or consider simply renaming this category.' })
+    }
+
+    await client.query('DELETE FROM inventory_categories WHERE id = $1', [id])
+    await client.query('COMMIT')
+
     res.json({ success: true })
   } catch (err) {
+    await client.query('ROLLBACK')
     console.error('Error deleting category:', err)
     res.status(500).json({ error: 'Could not delete category' })
+  } finally {
+    client.release()
   }
 })
+
 
 export default router

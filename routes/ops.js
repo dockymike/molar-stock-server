@@ -61,8 +61,26 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true })
   } catch (err) {
     console.error('Error deleting operatory:', err)
+
+    // PostgreSQL foreign key constraint violations
+    if (err.code === '23503') {
+      if (err.constraint === 'op_supplies_op_id_fkey') {
+        return res.status(400).json({
+          error:
+            'This operatory still has assigned supplies. Unassign all supplies first before deleting.',
+        })
+      }
+      if (err.constraint === 'supply_logs_op_id_fkey') {
+        return res.status(400).json({
+          error:
+            'This operatory has usage history in supply logs and cannot be deleted. Consider renaming.',
+        })
+      }
+    }
+
     res.status(500).json({ error: 'Could not delete operatory' })
   }
 })
+
 
 export default router
