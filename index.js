@@ -11,16 +11,16 @@ import opsRoutes from './routes/ops.js'
 import suppliesRoutes from './routes/supplies.js'
 import categoryRoutes from './routes/categories.js'
 import supplierRoutes from './routes/suppliers.js'
-import opSuppliesRoutes from './routes/opSupplies.js'
 import logsRoutes from './routes/logs.js'
 import proceduresRoutes from './routes/procedures.js'
 import procedureSuppliesRoutes from './routes/procedureSupplies.js'
 import lowStockThresholdRoutes from './routes/lowStockThresholdRoutes.js'
 import passwordRoutes from './routes/passwordReset.js'
 import stripeRoutes from './routes/stripe.js'
-import stripeWebhookRouter from './routes/stripeWebhook.js' // ✅ NEW
-
+import stripeWebhookRouter from './routes/stripeWebhook.js'
 import barcodeRoutes from './scanning/routes/barcode.js'
+import inventoryRoutes from './routes/inventory.js' // ✅ USED instead of op_supplies
+import locationsRoutes from './routes/locations.js'
 
 
 const app = express()
@@ -55,8 +55,7 @@ console.log('✅ /api/categories mounted')
 app.use('/api/suppliers', supplierRoutes)
 console.log('✅ /api/suppliers mounted')
 
-app.use('/api/op-supplies', opSuppliesRoutes)
-console.log('✅ /api/op-supplies mounted')
+// ❌ Removed: app.use('/api/op-supplies', opSuppliesRoutes)
 
 app.use('/api/logs', logsRoutes)
 console.log('✅ /api/logs mounted')
@@ -81,6 +80,12 @@ console.log('✅ /api/stripe mounted')
 
 app.use('/api/barcode', barcodeRoutes)
 console.log('✅ /api/barcode mounted')
+
+app.use('/api/inventory', inventoryRoutes)
+console.log('✅ /api/inventory mounted')
+
+app.use('/api/locations', locationsRoutes)
+
 
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`)

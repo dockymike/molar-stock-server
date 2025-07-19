@@ -6,12 +6,14 @@ import { verifyToken } from '../../auth/verifyToken.js'
 const router = express.Router()
 router.use(verifyToken)
 
-// 🔍 Lookup supply by barcode
-router.get('/:barcode', async (req, res) => {
+//
+// 🔍 Barcode Lookup
+//
+router.get('/lookup/:barcode', async (req, res) => {
   const { barcode } = req.params
   try {
     const result = await pool.query(
-      'SELECT * FROM supplies WHERE barcode = $1',
+      'SELECT * FROM inventory WHERE barcode = $1',
       [barcode]
     )
     if (result.rows.length === 0) {
@@ -24,13 +26,15 @@ router.get('/:barcode', async (req, res) => {
   }
 })
 
-// 🔗 Assign barcode to existing supply
+//
+// 🔗 Assign barcode to existing inventory item
+//
 router.post('/assign', async (req, res) => {
-  const { supply_id, barcode } = req.body
+  const { inventory_id, barcode } = req.body
   try {
     const result = await pool.query(
-      'UPDATE supplies SET barcode = $1 WHERE id = $2 RETURNING *',
-      [barcode, supply_id]
+      'UPDATE inventory SET barcode = $1 WHERE id = $2 RETURNING *',
+      [barcode, inventory_id]
     )
     res.json(result.rows[0])
   } catch (err) {
@@ -39,25 +43,56 @@ router.post('/assign', async (req, res) => {
   }
 })
 
-// ➕ Create new supply with barcode
+//
+// ➕ Create new inventory item with barcode
+//
 router.post('/create', async (req, res) => {
-  const { user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, barcode } = req.body
+  const {
+    user_id,
+    name,
+    category_id,
+    supplier_id,
+    quantity,
+    cost_per_unit,
+    unit,
+    barcode,
+    location_id,
+  } = req.body
+
+  const client = await pool.connect()
   try {
-    const result = await pool.query(
-      `INSERT INTO supplies (user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, barcode)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, barcode]
+    await client.query('BEGIN')
+
+    const invResult = await client.query(
+      `INSERT INTO inventory (user_id, name, category_id, supplier_id, cost_per_unit, unit, barcode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [user_id, name, category_id, supplier_id, cost_per_unit, unit, barcode]
     )
-    res.json(result.rows[0])
+
+    const inventory_id = invResult.rows[0].id
+
+    await client.query(
+      `INSERT INTO location_inventory (inventory_id, location_id, quantity, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())`,
+      [inventory_id, location_id, quantity]
+    )
+
+    await client.query('COMMIT')
+    res.json({ success: true, inventory_id })
   } catch (err) {
-    console.error('Error creating supply with barcode:', err)
+    await client.query('ROLLBACK')
+    console.error('Error creating inventory with barcode:', err)
     res.status(500).json({ error: 'Database error' })
+  } finally {
+    client.release()
   }
 })
 
-// 📥 Scan Check-In (adds quantity safely, prevents negatives)
+//
+// 📥 Scan Check-In (adds to location_inventory)
+//
 router.post('/checkin', async (req, res) => {
-  const { supply_id, quantity, op_id } = req.body
+  const { inventory_id, quantity, location_id } = req.body
   const client = await pool.connect()
 
   try {
@@ -66,58 +101,33 @@ router.post('/checkin', async (req, res) => {
 
     await client.query('BEGIN')
 
-    if (op_id) {
-      const result = await client.query(
-        'SELECT quantity FROM op_supplies WHERE op_id = $1 AND supply_id = $2 FOR UPDATE',
-        [op_id, supply_id]
-      )
+    const result = await client.query(
+      'SELECT quantity FROM location_inventory WHERE inventory_id = $1 AND location_id = $2 FOR UPDATE',
+      [inventory_id, location_id]
+    )
 
-      const currentQty = result.rows[0]?.quantity ?? 0
-      const newQty = currentQty + qty
+    const currentQty = result.rows[0]?.quantity ?? 0
+    const newQty = currentQty + qty
 
-      if (newQty < 0) {
-        await client.query('ROLLBACK')
-        return res.status(400).json({ error: 'Insufficient quantity in operatory' })
-      }
+    if (newQty < 0) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Insufficient quantity at location' })
+    }
 
-      if (result.rowCount > 0) {
-        await client.query(
-          'UPDATE op_supplies SET quantity = $1 WHERE op_id = $2 AND supply_id = $3',
-          [newQty, op_id, supply_id]
-        )
-      } else {
-        if (qty < 0) {
-          await client.query('ROLLBACK')
-          return res.status(400).json({ error: 'Cannot subtract from non-existent operatory supply' })
-        }
-
-        await client.query(
-          'INSERT INTO op_supplies (op_id, supply_id, quantity) VALUES ($1, $2, $3)',
-          [op_id, supply_id, qty]
-        )
-      }
-    } else {
-      const result = await client.query(
-        'SELECT quantity FROM supplies WHERE id = $1 FOR UPDATE',
-        [supply_id]
-      )
-
-      if (result.rowCount === 0) {
-        await client.query('ROLLBACK')
-        return res.status(404).json({ error: 'Supply not found' })
-      }
-
-      const currentQty = result.rows[0].quantity
-      const newQty = currentQty + qty
-
-      if (newQty < 0) {
-        await client.query('ROLLBACK')
-        return res.status(400).json({ error: 'Insufficient unassigned inventory' })
-      }
-
+    if (result.rowCount > 0) {
       await client.query(
-        'UPDATE supplies SET quantity = $1 WHERE id = $2',
-        [newQty, supply_id]
+        'UPDATE location_inventory SET quantity = $1, updated_at = NOW() WHERE inventory_id = $2 AND location_id = $3',
+        [newQty, inventory_id, location_id]
+      )
+    } else {
+      if (qty < 0) {
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: 'Cannot subtract from non-existent inventory at location' })
+      }
+      await client.query(
+        `INSERT INTO location_inventory (inventory_id, location_id, quantity, created_at, updated_at)
+         VALUES ($1, $2, $3, NOW(), NOW())`,
+        [inventory_id, location_id, qty]
       )
     }
 
@@ -132,17 +142,14 @@ router.post('/checkin', async (req, res) => {
   }
 })
 
-
-
-
-// 📤 Scan Consume (subtracts quantity)
+//
+// 📤 Scan Consume (subtracts from location_inventory)
+//
 router.post('/consume', async (req, res) => {
-  const { supply_id, quantity, op_id } = req.body
+  const { inventory_id, quantity, location_id } = req.body
   const client = await pool.connect()
 
   try {
-    if (!op_id) return res.status(400).json({ error: 'Operatory ID required' })
-
     const qty = parseInt(quantity, 10)
     if (isNaN(qty) || qty <= 0) {
       return res.status(400).json({ error: 'Invalid quantity' })
@@ -151,24 +158,24 @@ router.post('/consume', async (req, res) => {
     await client.query('BEGIN')
 
     const result = await client.query(
-      'SELECT quantity FROM op_supplies WHERE op_id = $1 AND supply_id = $2 FOR UPDATE',
-      [op_id, supply_id]
+      'SELECT quantity FROM location_inventory WHERE inventory_id = $1 AND location_id = $2 FOR UPDATE',
+      [inventory_id, location_id]
     )
 
     if (result.rowCount === 0) {
       await client.query('ROLLBACK')
-      return res.status(400).json({ error: 'Supply not found in this operatory' })
+      return res.status(400).json({ error: 'Inventory not found at this location' })
     }
 
     const currentQty = result.rows[0].quantity
     if (currentQty < qty) {
       await client.query('ROLLBACK')
-      return res.status(400).json({ error: 'Insufficient quantity in operatory' })
+      return res.status(400).json({ error: 'Insufficient quantity at location' })
     }
 
     await client.query(
-      'UPDATE op_supplies SET quantity = quantity - $1 WHERE op_id = $2 AND supply_id = $3',
-      [qty, op_id, supply_id]
+      'UPDATE location_inventory SET quantity = quantity - $1, updated_at = NOW() WHERE inventory_id = $2 AND location_id = $3',
+      [qty, inventory_id, location_id]
     )
 
     await client.query('COMMIT')
@@ -181,6 +188,5 @@ router.post('/consume', async (req, res) => {
     client.release()
   }
 })
-
 
 export default router

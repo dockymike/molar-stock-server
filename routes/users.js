@@ -11,20 +11,39 @@ router.post('/register', async (req, res) => {
   const { email, password, practice_name } = req.body
   console.log('📥 Register request:', { email, practice_name })
 
+  const client = await pool.connect()
+
   try {
+    await client.query('BEGIN')
+
     const hashed = await hashPassword(password)
-    const result = await pool.query(
+
+    const result = await client.query(
       'INSERT INTO users (email, password_hash, practice_name) VALUES ($1, $2, $3) RETURNING id, email, practice_name',
       [email, hashed, practice_name]
     )
 
-    console.log('✅ New user registered:', result.rows[0])
-    res.json(result.rows[0])
+    const newUser = result.rows[0]
+
+    // ✅ Insert default "Common Area" location for this user
+    await client.query(
+      'INSERT INTO locations (user_id, name, protected) VALUES ($1, $2, $3)',
+      [newUser.id, 'Common Area', true]
+    )
+
+    await client.query('COMMIT')
+
+    console.log('✅ New user registered with Common Area:', newUser)
+    res.json(newUser)
   } catch (err) {
+    await client.query('ROLLBACK')
     console.error('❌ Error registering user:', err)
     res.status(500).json({ error: 'Registration failed' })
+  } finally {
+    client.release()
   }
 })
+
 
 // ✅ LOGIN existing user
 router.post('/login', async (req, res) => {
@@ -63,6 +82,8 @@ router.post('/login', async (req, res) => {
         email: user.email,
         practice_name: user.practice_name,
         is_paid: user.is_paid,
+        dark_mode: user.dark_mode, // ✅ include this
+
       },
     }
 
@@ -81,7 +102,7 @@ router.get('/:userId', verifyToken, async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, email, practice_name, is_paid FROM users WHERE id = $1',
+      'SELECT id, email, practice_name, is_paid, dark_mode FROM users WHERE id = $1',
       [userId]
     )
 
@@ -98,5 +119,25 @@ router.get('/:userId', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Could not fetch user' })
   }
 })
+
+
+// ✅ PATCH: Update dark mode preference
+router.patch('/dark-mode', verifyToken, async (req, res) => {
+  const { dark_mode } = req.body
+  const userId = req.user.id
+
+  try {
+    await pool.query(
+      'UPDATE users SET dark_mode = $1 WHERE id = $2',
+      [dark_mode, userId]
+    )
+    console.log(`🌙 Dark mode updated to ${dark_mode} for user ${userId}`)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('❌ Failed to update dark mode:', err)
+    res.status(500).json({ error: 'Failed to update preference' })
+  }
+})
+
 
 export default router

@@ -1,3 +1,4 @@
+// ✅ src/routes/supplies.js
 import express from 'express'
 import pool from '../db/index.js'
 import { verifyToken } from '../auth/verifyToken.js'
@@ -5,62 +6,9 @@ import { verifyToken } from '../auth/verifyToken.js'
 const router = express.Router()
 router.use(verifyToken)
 
-// ✅ Assigned quantity breakdown for a supply (with op ID and op_supply ID)
-router.get('/assigned-details/:supply_id', async (req, res) => {
-  const { supply_id } = req.params
-  console.log('🛬 Incoming request for assigned-details of supply', supply_id)
-
-  try {
-    const result = await pool.query(
-      `SELECT 
-         os.id AS op_supply_id,
-         os.op_id,
-         o.name AS op_name,
-         os.quantity
-       FROM op_supplies os
-       JOIN ops o ON os.op_id = o.id
-       WHERE os.supply_id = $1
-       ORDER BY o.name`,
-      [supply_id]
-    )
-    res.json(result.rows)
-  } catch (err) {
-    console.error('Error fetching assigned breakdown:', err)
-    res.status(500).json({ error: 'Could not fetch assigned breakdown' })
-  }
-})
-
-// ✅ Add a new supply (now includes unit and low_stock_threshold)
-router.post('/', async (req, res) => {
-  const {
-    user_id,
-    name,
-    category_id,
-    supplier_id,
-    quantity,
-    cost_per_unit,
-    unit,
-    low_stock_threshold, // ✅ added
-  } = req.body
-
-  try {
-    const result = await pool.query(
-      `INSERT INTO supplies
-       (user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold]
-    )
-    res.json(result.rows[0])
-  } catch (err) {
-    console.error('Error adding supply:', err)
-    res.status(500).json({ error: 'Could not add supply' })
-  }
-})
-
-// ✅ Get all supplies for a user
-router.get('/:user_id', async (req, res) => {
-  const { user_id } = req.params
+// ✅ Get all supplies for the logged-in user
+router.get('/', async (req, res) => {
+  const user_id = req.user.id
 
   try {
     const result = await pool.query(
@@ -72,15 +20,84 @@ router.get('/:user_id', async (req, res) => {
        ORDER BY s.id`,
       [user_id]
     )
-
     res.json(result.rows)
   } catch (err) {
-    console.error('Error fetching supplies:', err)
+    console.error('❌ Error fetching supplies:', err)
     res.status(500).json({ error: 'Could not fetch supplies' })
   }
 })
 
-// ✅ Edit a supply (now includes unit and low_stock_threshold)
+// ✅ Fetch supplies with inventory breakdown
+router.get('/full', async (req, res) => {
+  const user_id = req.user.id
+  const { sortBy } = req.query
+
+  let orderClause = 'ORDER BY s.name ASC'
+  if (sortBy === 'available_asc') orderClause = 'ORDER BY inv.quantity ASC'
+  if (sortBy === 'available_desc') orderClause = 'ORDER BY inv.quantity DESC'
+  if (sortBy === 'name_desc') orderClause = 'ORDER BY s.name DESC'
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+         s.*, 
+         c.name AS category_name,
+         sp.name AS supplier_name,
+         COALESCE(SUM(inv.quantity), 0) AS total_inventory,
+         json_agg(json_build_object(
+           'inventory_id', inv.id,
+           'location', inv.location,
+           'quantity', inv.quantity
+         )) FILTER (WHERE inv.id IS NOT NULL) AS inventory_entries
+       FROM supplies s
+       LEFT JOIN inventory_categories c ON s.category_id = c.id
+       LEFT JOIN suppliers sp ON s.supplier_id = sp.id
+       LEFT JOIN inventory inv ON s.id = inv.supply_id
+       WHERE s.user_id = $1
+       GROUP BY s.id, c.name, sp.name
+       ${orderClause}`,
+      [user_id]
+    )
+
+    res.json(result.rows)
+  } catch (err) {
+    console.error('❌ Error fetching full supplies:', err)
+    res.status(500).json({ error: 'Failed to fetch full supply list' })
+  }
+})
+
+// ✅ Add a new supply
+router.post('/', async (req, res) => {
+  const user_id = req.user.id
+  const {
+    name,
+    category_id,
+    supplier_id,
+    quantity,
+    cost_per_unit,
+    unit,
+    low_stock_threshold,
+    barcode,
+  } = req.body
+
+  const cleanedBarcode = barcode?.trim() === '' ? null : barcode
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO supplies
+       (user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, barcode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [user_id, name, category_id, supplier_id, quantity, cost_per_unit, unit, low_stock_threshold, cleanedBarcode]
+    )
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error('❌ Error adding supply:', err)
+    res.status(500).json({ error: 'Could not add supply' })
+  }
+})
+
+// ✅ Update a supply
 router.put('/:id', async (req, res) => {
   const { id } = req.params
   const {
@@ -118,13 +135,12 @@ router.put('/:id', async (req, res) => {
 
     res.json(result.rows[0])
   } catch (err) {
-    console.error('Error updating supply:', err)
+    console.error('❌ Error updating supply:', err)
     res.status(500).json({ error: 'Could not update supply' })
   }
 })
 
-
-// ✅ Delete a supply (only if not assigned to any operatory)
+// ✅ Delete a supply (safe deletion)
 router.delete('/:id', async (req, res) => {
   const { id } = req.params
   const client = await pool.connect()
@@ -132,19 +148,16 @@ router.delete('/:id', async (req, res) => {
   try {
     await client.query('BEGIN')
 
-    // 🔍 Check if supply is still assigned to any operatories
-    const result = await client.query(
-      'SELECT COUNT(*) FROM op_supplies WHERE supply_id = $1',
+    const invResult = await client.query(
+      'SELECT COUNT(*) FROM inventory WHERE supply_id = $1',
       [id]
     )
-
-    const count = parseInt(result.rows[0].count, 10)
-
-    if (count > 0) {
+    const invCount = parseInt(invResult.rows[0].count, 10)
+    if (invCount > 0) {
       await client.query('ROLLBACK')
-      return res
-        .status(400)
-        .json({ error: 'This supply is still assigned to one or more operatories. Remove the supply from all operatories first.' })
+      return res.status(400).json({
+        error: 'This supply is still present in inventory. Please remove it from inventory first.',
+      })
     }
 
     await client.query('DELETE FROM supplies WHERE id = $1', [id])
@@ -152,7 +165,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true })
   } catch (err) {
     await client.query('ROLLBACK')
-    console.error('Error deleting supply:', err)
+    console.error('❌ Error deleting supply:', err)
     res.status(500).json({ error: 'Could not delete supply' })
   } finally {
     client.release()
