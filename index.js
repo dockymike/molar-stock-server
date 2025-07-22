@@ -40,6 +40,9 @@ import locationsRoutes from './routes/locations.js'
 import { errorHandler, dbHealthCheck } from './middleware/errorHandler.js'
 
 const app = express()
+// 👇 Crucial for Heroku + cookies to work
+app.set('trust proxy', 1)
+
 const port = process.env.PORT || 3001
 
 // Configure CORS based on environment
