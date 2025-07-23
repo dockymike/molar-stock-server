@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken'
 
+
 export function verifyToken(req, res, next) {
+    // 🍪 Log incoming cookies for debugging
+  console.log('🍪 Incoming cookies:', req.cookies)
   // Try to get token from httpOnly cookie first, fallback to Authorization header for backward compatibility
   let token = req.cookies?.authToken
   

@@ -118,7 +118,7 @@ router.post('/login', async (req, res) => {
 
     res.cookie('authToken', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: true,
       sameSite: 'Lax',
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
       path: '/'
@@ -171,7 +171,7 @@ router.get('/:userId', verifyToken, async (req, res) => {
 router.post('/logout', (req, res) => {
   res.clearCookie('authToken', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     sameSite: 'Lax', 
     path: '/', // <-- match the same path used in res.cookie
   })
