@@ -48,7 +48,7 @@ const port = process.env.PORT || 3001
 // Configure CORS based on environment
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL || 'https://molar-stock-front-end.vercel.app' 
+    ? process.env.FRONTEND_URL || 'https://app.molarstock.com' 
     : ['http://localhost:5173', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
