@@ -95,6 +95,7 @@ router.post('/login', async (req, res) => {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'None',
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
+      domain: '.molarstock.com', 
       path: '/'
     })
 
@@ -147,6 +148,7 @@ router.post('/logout', (req, res) => {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'None',
+    domain: '.molarstock.com', 
     path: '/', // <-- match the same path used in res.cookie
   })
   res.json({ success: true })
