@@ -46,7 +46,8 @@ router.get('/me', verifyToken, async (req, res) => {
 
 // ✅ REGISTER a new user
 router.post('/register', async (req, res) => {
-  const { email, password, practice_name } = req.body
+  const { password, practice_name } = req.body
+  const email = req.body.email.toLowerCase()
 
   const client = await pool.connect()
 
@@ -74,12 +75,11 @@ router.post('/register', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK')
     console.error('Error registering user:', err)
-    
-    // Handle specific database errors
-    if (err.code === '23505' && err.constraint === 'users_email_key') {
+
+    if (err.code === '23505') {
       return res.status(400).json({ error: 'Email already exists. Please use a different email.' })
     }
-    
+
     res.status(500).json({ error: 'Registration failed' })
   } finally {
     client.release()
@@ -87,15 +87,18 @@ router.post('/register', async (req, res) => {
 })
 
 
+
 // ✅ LOGIN existing user
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body
+  const { password } = req.body
+  const email = req.body.email.toLowerCase()
 
   console.log('📥 Login attempt:', { email, password })
 
   try {
+    // Case-insensitive lookup
     const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      'SELECT * FROM users WHERE LOWER(email) = $1',
       [email]
     )
 
@@ -116,16 +119,13 @@ router.post('/login', async (req, res) => {
       { expiresIn: '8h' }
     )
 
-    // Set httpOnly cookie with proper configuration
-
     res.cookie('authToken', token, {
       httpOnly: true,
       secure: true,
       sameSite: 'Lax',
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
-      path: '/'
+      path: '/',
     })
-
 
     const responsePayload = {
       user: {
@@ -143,6 +143,7 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ error: 'Login failed' })
   }
 })
+
 
 
 
