@@ -173,8 +173,7 @@ router.post('/logout', (req, res) => {
   res.clearCookie('authToken', {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'None',
-    domain: '.molarstock.com', 
+    sameSite: 'None', 
     path: '/', // <-- match the same path used in res.cookie
   })
   res.json({ success: true })
