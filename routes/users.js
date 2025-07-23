@@ -18,6 +18,32 @@ router.get('/test-cookie', (req, res) => {
   res.json({ message: 'Test cookie set' })
 })
 
+
+// ✅ GET /me - Return current logged-in user from JWT
+router.get('/me', verifyToken, async (req, res) => {
+  const userId = req.user.id
+
+  try {
+    const result = await pool.query(
+      'SELECT id, email, practice_name, is_paid, dark_mode FROM users WHERE id = $1',
+      [userId]
+    )
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    res.json({ user: result.rows[0] })
+  } catch (err) {
+    console.error('Error fetching /me user:', err)
+    res.status(500).json({ error: 'Could not fetch user info' })
+  }
+})
+
+
+
+
+
 // ✅ REGISTER a new user
 router.post('/register', async (req, res) => {
   const { email, password, practice_name } = req.body
