@@ -91,6 +91,8 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body
 
+  console.log('📥 Login attempt:', { email, password })
+
   try {
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1',
